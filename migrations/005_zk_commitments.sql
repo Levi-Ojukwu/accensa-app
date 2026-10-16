@@ -14,6 +14,9 @@
 --
 -- Rows are scoped to the merchant that submitted them (`merchant_id`), and
 -- every write path resolves the merchant from the session before inserting.
+-- That scoping is enforced by the database as well as by the application:
+-- row-level security (below) binds every connection, including the app's own,
+-- so a query without the merchant scope reads nothing instead of everything.
 --
 -- This file is applied automatically by `ensureZkCommitmentsSchema()` in
 -- apps/web/src/lib/zk-ledger.ts on every request to the proofs route. It is
@@ -44,6 +47,17 @@ CREATE TABLE IF NOT EXISTS zk_commitments (
 CREATE INDEX IF NOT EXISTS idx_zk_commitments_merchant_verified
     ON zk_commitments (merchant_id, verified_at DESC);
 
+-- Same isolation shape as payments/sync_state (003_multi_merchant.sql),
+-- role_tuples (007) and merchant_stores (009). FORCE binds even the table
+-- owner — the role this app connects as — so isolation does not rest on
+-- application code alone. DROP POLICY first keeps a re-run safe.
+ALTER TABLE zk_commitments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE zk_commitments FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS zk_commitments_merchant_isolation ON zk_commitments;
+CREATE POLICY zk_commitments_merchant_isolation ON zk_commitments
+    USING (merchant_id = current_setting('accensa.merchant_id', true)::int)
+    WITH CHECK (merchant_id = current_setting('accensa.merchant_id', true)::int);
+
 COMMIT;
 
 -- ============================== DOWN ==============================
@@ -52,3 +66,7 @@ COMMIT;
 -- BEGIN;
 -- DROP TABLE IF EXISTS zk_commitments;
 -- COMMIT;
+--
+-- The row-level security policy and its ENABLE/FORCE flags are catalog rows
+-- owned by zk_commitments, so DROP TABLE removes them with the table; there
+-- is nothing separate to unwind.
