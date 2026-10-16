@@ -1,6 +1,7 @@
 import { Client } from 'pg';
 import { ensureNotificationSchema } from './notifications';
 import { ensureChatNotifierSchema } from './notifications/chatNotifier';
+import { resolveShard } from './shard-router';
 
 /** Alias used by the indexer and sync trigger code that reaches into the DB. */
 export type PostgresClient = Client;
@@ -21,6 +22,32 @@ export function connectionString(): string {
 
 export async function withClient<T>(fn: (client: Client) => Promise<T>): Promise<T> {
   const client = new Client({ connectionString: connectionString() });
+  await client.connect();
+  try {
+    return await fn(client);
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+/**
+ * Opens a connection to whichever shard `shard-router` resolves for
+ * `tenantId` — see SHARDING.md.
+ *
+ * With `DATABASE_SHARDS` unset (every deployment today) `resolveShard`
+ * returns the single `"default"` shard backed by `DATABASE_URL`, so this
+ * connects to exactly the same database `withClient` does and changes no
+ * behaviour. Once `DATABASE_SHARDS` is set, the tenant's owning shard's
+ * `connectionString` is used instead. No existing `withClient` call site was
+ * converted: the first tenant-aware feature adopts this when it has a source
+ * for `tenantId`.
+ */
+export async function withTenantClient<T>(
+  tenantId: string,
+  fn: (client: Client) => Promise<T>,
+): Promise<T> {
+  const shard = resolveShard(tenantId);
+  const client = new Client({ connectionString: shard.connectionString });
   await client.connect();
   try {
     return await fn(client);
@@ -132,6 +159,18 @@ export async function ensureSchema(client: Client): Promise<void> {
  `);
   await client.query(
     `CREATE INDEX IF NOT EXISTS idx_challenge_nonces_issued ON challenge_nonces(issued_at DESC);`,
+  );
+
+  // Tenant identifier for multi-tenant sharding (#171) — the code-side copy
+  // of migrations/003_tenant_shard_columns.sql, kept here so a fresh database
+  // needs no manual migration step, the same pattern as 001/002. The DEFAULT
+  // is the whole compatibility story: every existing row keeps meaning what
+  // it meant, and every INSERT that omits the column still succeeds.
+  await client.query(
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(64) NOT NULL DEFAULT 'default';`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_payments_workspace_id ON payments(workspace_id);`,
   );
 
   await ensureMultiMerchantSchema(client);
