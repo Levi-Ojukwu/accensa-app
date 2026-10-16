@@ -122,6 +122,9 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
 MERCHANT_ADDRESS=GCALKSGAZRJLSUEJT3M5W6LN4R7XQOLIRCOS6ZA6EDZVTZDBIIPPFKJ6
 STELLAR_RPC_URL=https://soroban-testnet.stellar.org
 HOOK_API_KEY=any-shared-secret   # required for /api/hook/settle
+# JWT_SECRET_KEY — required for every session, no fallback.
+# Generate with: openssl rand -hex 32
+JWT_SECRET_KEY=replace-with-output-of-openssl-rand-hex-32
 # ASSET_CONTRACT_IDS — comma-separated SAC ids whose transfers are revenue.
 # Omitted, it defaults to the testnet native XLM SAC. For USDC (or XLM + USDC):
 # ASSET_CONTRACT_IDS=CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA,CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
@@ -131,6 +134,15 @@ cd apps/web
 pnpm install
 pnpm dev
 ```
+
+`JWT_SECRET_KEY` is **required** in every environment: it signs and verifies
+each session, and a deployment that follows this guide without one fails on
+first sign-in. The throw lives in `apps/web/src/lib/auth.ts`:
+`JWT_SECRET_KEY is not set; refusing to sign or verify a session`
+(the same secret is also read by `apps/web/src/lib/auth/totp.ts` and
+`apps/web/src/lib/auth/totp-challenge.ts`). There is no default: a fallback
+committed to the repository would be a signing key everyone has. Generate one
+with `openssl rand -hex 32` and keep it out of git.
 
 Then trigger an index run with `curl localhost:3000/api/sync`, and the dashboard at
 `/dashboard` will show whatever settled to `MERCHANT_ADDRESS`. If nothing has, it
