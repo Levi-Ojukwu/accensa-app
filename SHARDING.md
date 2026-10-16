@@ -34,9 +34,10 @@ today.
   pattern for `001`/`002`.
 - This document.
 
-None of the four existing call sites of `withClient`
-(`/api/payments`, `/api/sync`, `/api/routes`, `/api/hook/settle`) were
-touched. They keep connecting to `DATABASE_URL` exactly as before.
+None of the existing call sites of `withClient` (`/api/payments`, `/api/sync`,
+`/api/routes`, `/api/hook/settle`, and the auth/merchant/inventory handlers
+that came later) were touched. They keep connecting to `DATABASE_URL` exactly
+as before.
 
 ## Why rendezvous hashing instead of a shard map table
 
