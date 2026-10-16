@@ -35,6 +35,19 @@ export async function ensureZkCommitmentsSchema(client: Client): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_zk_commitments_merchant_verified
        ON zk_commitments (merchant_id, verified_at DESC);`,
   );
+  // Isolation, same shape as payments/sync_state (migrations/003_multi_merchant.sql),
+  // role_tuples and the merchant_* tables: FORCE binds even the table owner —
+  // the role this app connects as — so a query without the merchant scope
+  // reads nothing instead of every merchant's commitments. DROP POLICY first
+  // keeps this re-run safe, as migrations/009 does.
+  await client.query(`ALTER TABLE zk_commitments ENABLE ROW LEVEL SECURITY;`);
+  await client.query(`ALTER TABLE zk_commitments FORCE ROW LEVEL SECURITY;`);
+  await client.query(`DROP POLICY IF EXISTS zk_commitments_merchant_isolation ON zk_commitments;`);
+  await client.query(`
+    CREATE POLICY zk_commitments_merchant_isolation ON zk_commitments
+      USING (merchant_id = current_setting('accensa.merchant_id', true)::int)
+      WITH CHECK (merchant_id = current_setting('accensa.merchant_id', true)::int);
+  `);
 }
 
 /**
@@ -53,6 +66,23 @@ export async function recordVerifiedCommitment(
   merchantId: number,
   c: { commitment: string; payloadHash: string; scheme: string },
 ): Promise<{ recorded: boolean }> {
+  // FORCE ROW LEVEL SECURITY (set up by ensureZkCommitmentsSchema) binds this
+  // connection too, and the proofs route resolves the merchant from the
+  // session *without* ever setting the `accensa.merchant_id` GUC the policy
+  // reads — so scope the session to the merchant this write is for, but only
+  // if nothing scoped it already. A connection already bound to a different
+  // merchant stays bound: the policy, not this function, then refuses the
+  // write (#508 is the precedent for leaving this to chance).
+  const scope = await client.query<{ value: string | null }>(
+    `SELECT current_setting('accensa.merchant_id', true) AS value`,
+  );
+  if (!scope.rows[0]?.value) {
+    await client.query('SELECT set_config($1, $2, false)', [
+      'accensa.merchant_id',
+      String(merchantId),
+    ]);
+  }
+
   const res = await client.query(
     `INSERT INTO zk_commitments (merchant_id, commitment, payload_hash, proof_scheme)
      VALUES ($1, $2, $3, $4)
