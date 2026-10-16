@@ -12,7 +12,9 @@
 -- Actually splitting across physical shards is an operational step, not a
 -- schema one: point each shard's own database at DATABASE_SHARDS, and route
 -- tenant-aware reads/writes through `withTenantClient` (apps/web/src/lib/db.ts)
--- instead of `withClient`. Existing call sites are untouched and keep using
+-- instead of `withClient`. The same statements are applied automatically and
+-- idempotently by `ensureSchema`, matching the existing pattern for 001/002.
+-- Existing call sites are untouched and keep using
 -- `withClient` against the one database named by DATABASE_URL. See
 -- SHARDING.md for the full rollout plan and what is deliberately not done
 -- here (backfilling per-tenant workspace_id values beyond the default,
